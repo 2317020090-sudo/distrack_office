@@ -6,7 +6,8 @@ import time
 import math
 import hashlib
 import json
-import pwinput  # Tetap butuh ini untuk konfirmasi password
+import pwinput
+import gc # [PENTING] Untuk membersihkan memori agar tidak crash
 from insightface.app import FaceAnalysis
 
 # ================= KONFIGURASI DATABASE MYSQL =================
@@ -24,7 +25,9 @@ STAGE_DURATION = 15
 
 # ================= INISIALISASI AI =================
 print("[INIT] Memuat Model AI (InsightFace)...")
-face_app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+
+# [PERBAIKAN CRASH] Gunakan 'buffalo_s' (Small) agar RAM aman
+face_app = FaceAnalysis(name="buffalo_s", providers=["CPUExecutionProvider"])
 face_app.prepare(ctx_id=0, det_size=(640, 640))
 
 # ================= HELPER FUNCTIONS =================
@@ -82,14 +85,12 @@ def register_user_process():
     # --- 1. INPUT DATA USER ---
     user_name = input("1. Masukkan Nama Lengkap : ").strip()
     user_email = input("2. Masukkan Gmail        : ").strip()
+    user_unit  = input("3. Masukkan Unit/Dept    : ").strip()
+    user_role  = input("4. Masukkan Jabatan/Role : ").strip() # <--- [BARU] Input Role
     
     while True:
-        # --- PERUBAHAN DI SINI ---
-        # Password UTAMA: Pakai input() biasa (Teks Terlihat)
-        user_pass = input("3. Buat Password         : ")
-        
-        # Password KONFIRMASI: Pakai pwinput (Teks Bintang ******)
-        user_pass_conf = pwinput.pwinput(prompt="4. Ulangi Password       : ", mask="*")
+        user_pass = input("5. Buat Password         : ")
+        user_pass_conf = pwinput.pwinput(prompt="6. Ulangi Password       : ", mask="*")
         
         if user_pass == user_pass_conf and user_pass != "":
             print("✅ Password valid!")
@@ -97,15 +98,20 @@ def register_user_process():
         else:
             print("❌ Password tidak sama atau kosong. Ulangi.\n")
 
-    if not user_name or not user_email: 
-        print("Nama dan Email wajib diisi.")
+    if not user_name or not user_email or not user_unit or not user_role: 
+        print("Semua data (Nama, Email, Unit, Role) wajib diisi.")
         return
 
     # --- 2. MULAI KAMERA ---
-    cap = cv2.VideoCapture(0)
+    # [PERBAIKAN] Gunakan CAP_DSHOW agar kamera stabil
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
     stage_idx = 0
     progress_counter = 0
     best_frontal_embedding = None 
+    frame_count = 0 
     
     print("\n[INFO] Ikuti instruksi gerakan kepala...")
     time.sleep(1)
@@ -115,6 +121,12 @@ def register_user_process():
         if not ret: break
         
         frame = cv2.flip(frame, 1) 
+        
+        # [PERBAIKAN] GC Collect agar RAM tidak penuh
+        frame_count += 1
+        if frame_count % 30 == 0:
+            gc.collect()
+
         faces = face_app.get(frame)
         current_instruction = f"MOHON HADAP: {STAGES[stage_idx]}"
         status_color = (0, 255, 255)
@@ -148,7 +160,8 @@ def register_user_process():
                 except: pass
                 
                 if stage_idx >= len(STAGES):
-                    save_success = finish_registration_mysql(user_name, user_email, user_pass, best_frontal_embedding)
+                    # --- KIRIM SEMUA DATA (Role juga dikirim) ---
+                    save_success = finish_registration_mysql(user_name, user_email, user_unit, user_role, user_pass, best_frontal_embedding)
                     
                     if save_success:
                         cv2.putText(frame, "REGISTRASI SUKSES!", (50, 200), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 4)
@@ -168,7 +181,8 @@ def register_user_process():
     cap.release()
     cv2.destroyAllWindows()
 
-def finish_registration_mysql(name, email, password, embedding):
+# --- FUNGSI SIMPAN DB ---
+def finish_registration_mysql(name, email, unit, role, password, embedding):
     if embedding is None:
         print("[ERROR] Embedding DEPAN tidak terekam.")
         return False
@@ -179,29 +193,32 @@ def finish_registration_mysql(name, email, password, embedding):
     try:
         cur = conn.cursor()
         
-        # 1. Hashing Password
+        # Hashing Password
         pass_hash = hash_password(password)
-        
-        # 2. Konversi Array ke JSON String
+        # Convert Embedding ke JSON
         emb_json = json.dumps(embedding.tolist())
         
-        # 3. Query MySQL
+        # [UPDATE] Query Include Role
         query = """
-            INSERT INTO users (name, email, password_hash, embedding) 
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO users (name, email, unit, role, password_hash, embedding) 
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE 
             email = VALUES(email),
+            unit = VALUES(unit),
+            role = VALUES(role),
             password_hash = VALUES(password_hash),
             embedding = VALUES(embedding);
         """
         
-        cur.execute(query, (name, email, pass_hash, emb_json))
+        cur.execute(query, (name, email, unit, role, pass_hash, emb_json))
         conn.commit()
         
         print("\n" + "="*50)
         print(f"✅ PENDAFTARAN USER BERHASIL (MYSQL)!")
-        print(f"   Nama  : {name}")
-        print(f"   Email : {email}")
+        print(f"   Nama    : {name}")
+        print(f"   Unit    : {unit}")
+        print(f"   Jabatan : {role}")
+        print(f"   Email   : {email}")
         print("="*50)
         return True
     except Exception as e:
