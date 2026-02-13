@@ -7,7 +7,7 @@ import math
 import hashlib
 import json
 import pwinput
-import gc # [PENTING] Untuk membersihkan memori agar tidak crash
+import gc 
 from insightface.app import FaceAnalysis
 
 # ================= KONFIGURASI DATABASE MYSQL =================
@@ -24,10 +24,11 @@ STAGES = ["DEPAN", "KANAN", "KIRI", "ATAS", "BAWAH"]
 STAGE_DURATION = 15 
 
 # ================= INISIALISASI AI =================
-print("[INIT] Memuat Model AI (InsightFace)...")
+print("[INIT] Memuat Model AI (InsightFace - Buffalo Large)...")
 
-# [PERBAIKAN CRASH] Gunakan 'buffalo_s' (Small) agar RAM aman
-face_app = FaceAnalysis(name="buffalo_s", providers=["CPUExecutionProvider"])
+# [PERUBAHAN] KEMBALI KE 'buffalo_l' (LARGE) SESUAI PERMINTAAN
+# Peringatan: Ini membutuhkan RAM besar. Jika crash, ganti ke 'buffalo_s'.
+face_app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
 face_app.prepare(ctx_id=0, det_size=(640, 640))
 
 # ================= HELPER FUNCTIONS =================
@@ -86,7 +87,7 @@ def register_user_process():
     user_name = input("1. Masukkan Nama Lengkap : ").strip()
     user_email = input("2. Masukkan Gmail        : ").strip()
     user_unit  = input("3. Masukkan Unit/Dept    : ").strip()
-    user_role  = input("4. Masukkan Jabatan/Role : ").strip() # <--- [BARU] Input Role
+    user_role  = input("4. Masukkan Jabatan/Role : ").strip() 
     
     while True:
         user_pass = input("5. Buat Password         : ")
@@ -99,11 +100,11 @@ def register_user_process():
             print("❌ Password tidak sama atau kosong. Ulangi.\n")
 
     if not user_name or not user_email or not user_unit or not user_role: 
-        print("Semua data (Nama, Email, Unit, Role) wajib diisi.")
+        print("Semua data wajib diisi.")
         return
 
     # --- 2. MULAI KAMERA ---
-    # [PERBAIKAN] Gunakan CAP_DSHOW agar kamera stabil
+    # Gunakan CAP_DSHOW agar stabil di Windows
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -122,7 +123,7 @@ def register_user_process():
         
         frame = cv2.flip(frame, 1) 
         
-        # [PERBAIKAN] GC Collect agar RAM tidak penuh
+        # Bersihkan memori setiap 30 frame agar buffalo_l tidak bikin crash
         frame_count += 1
         if frame_count % 30 == 0:
             gc.collect()
@@ -160,7 +161,7 @@ def register_user_process():
                 except: pass
                 
                 if stage_idx >= len(STAGES):
-                    # --- KIRIM SEMUA DATA (Role juga dikirim) ---
+                    # Simpan data ke database
                     save_success = finish_registration_mysql(user_name, user_email, user_unit, user_role, user_pass, best_frontal_embedding)
                     
                     if save_success:
@@ -193,12 +194,9 @@ def finish_registration_mysql(name, email, unit, role, password, embedding):
     try:
         cur = conn.cursor()
         
-        # Hashing Password
         pass_hash = hash_password(password)
-        # Convert Embedding ke JSON
         emb_json = json.dumps(embedding.tolist())
         
-        # [UPDATE] Query Include Role
         query = """
             INSERT INTO users (name, email, unit, role, password_hash, embedding) 
             VALUES (%s, %s, %s, %s, %s, %s)
